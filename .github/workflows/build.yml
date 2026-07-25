@@ -28,7 +28,7 @@ jobs:
       - name: Prepare sketch folder
         run: |
           mkdir -p SmallTV
-          cp ESP8266_SmallTV_Pro_V8_0_0_Location_Fix.ino SmallTV/SmallTV.ino
+          cp ESP8266_SmallTV_Pro_V8_0_1_Geocode_Fix.ino SmallTV/SmallTV.ino
       - name: Install libraries
         run: |
           arduino-cli lib install "Adafruit GFX Library"
