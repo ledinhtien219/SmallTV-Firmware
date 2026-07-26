@@ -24,7 +24,7 @@ permissions:
 
 env:
   ARDUINO_CORE_VERSION: "3.1.2"
-  FIRMWARE_VERSION: "8.0.16"
+  FIRMWARE_VERSION: "8.0.17"
   SKETCH_SOURCE: ESP8266_SmallTV_Pro_V8_0_15_Full_Audit_Fix.ino
   SKETCH_DIR: SmallTV
   BUILD_DIR: build
@@ -39,8 +39,11 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Apply and verify V8.0.16 runtime fixes
+      - name: Apply and verify V8.0.16 base fixes
         run: python3 tools/apply_v8_0_15_runtime_fixes.py
+
+      - name: Apply and verify V8.0.17 final fixes
+        run: python3 tools/apply_v8_0_17_final_fixes.py
 
       - name: Cache Arduino packages
         uses: actions/cache@v4
