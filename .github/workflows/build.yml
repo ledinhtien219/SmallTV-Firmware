@@ -7,10 +7,12 @@ on:
       - main
     paths:
       - "**.ino"
+      - "tools/**"
       - ".github/workflows/build.yml"
   pull_request:
     paths:
       - "**.ino"
+      - "tools/**"
       - ".github/workflows/build.yml"
 
 concurrency:
@@ -36,6 +38,9 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
+
+      - name: Apply V8.0.15 runtime fixes
+        run: python3 tools/apply_v8_0_15_runtime_fixes.py
 
       - name: Cache Arduino packages
         uses: actions/cache@v4
