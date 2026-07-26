@@ -1,104 +1,111 @@
 from pathlib import Path
+import re
 
 SOURCE = Path("ESP8266_SmallTV_Pro_V8_0_15_Full_Audit_Fix.ino")
 text = SOURCE.read_text(encoding="utf-8")
 
 
-def replace_once(old: str, new: str) -> None:
+def sub_once(pattern: str, replacement: str, *, flags: int = 0, required: bool = True) -> None:
     global text
-    if old not in text:
-        raise RuntimeError(f"Expected V8.0.16 fragment not found: {old[:140]!r}")
-    text = text.replace(old, new, 1)
+    updated, count = re.subn(pattern, replacement, text, count=1, flags=flags)
+    if count:
+        text = updated
+    elif required:
+        raise RuntimeError(f"Required patch target not found: {pattern[:140]!r}")
 
 
-# Make the produced binary identify itself correctly.
-replace_once('static const char* FW_VERSION = "8.0.16";',
-             'static const char* FW_VERSION = "8.0.17";')
+# Version and stable frame interval. Accept reruns without modifying twice.
+text = text.replace('static const char* FW_VERSION = "8.0.16";',
+                    'static const char* FW_VERSION = "8.0.17";')
+text = text.replace('const unsigned long MOCHI_FRAME_INTERVAL_MS = 50UL;',
+                    'const unsigned long MOCHI_FRAME_INTERVAL_MS = 80UL;')
 
-# A 20 FPS schedule overloaded the raw-SPI renderer whenever network work ran.
-# 80 ms gives a stable 12.5 FPS while the V8.0.16 renderer only redraws effects.
-replace_once("const unsigned long MOCHI_FRAME_INTERVAL_MS = 50UL;",
-             "const unsigned long MOCHI_FRAME_INTERVAL_MS = 80UL;")
+# Track manual edits immediately so the five-second status refresh cannot restore
+# the previous city or submit old coordinates.
+if "typedLocationChanged" not in text:
+    sub_once(
+        r"const \$=id=>document\.getElementById\(id\);let weatherDirty=false;let locationValid=false;",
+        "const $=id=>document.getElementById(id);let weatherDirty=false;"
+        "let locationValid=false;let typedLocationChanged=false;",
+    )
 
-# The original page refreshed every five seconds. Typing a new city did not mark
-# the form dirty, so refresh() could restore the old city and save old coordinates.
-replace_once(
-    "const $=id=>document.getElementById(id);let weatherDirty=false;let locationValid=false;",
-    "const $=id=>document.getElementById(id);let weatherDirty=false;"
-    "let locationValid=false;let typedLocationChanged=false;"
-)
-replace_once(
+text = text.replace(
     "resolve:weatherDirty?1:0,utc:$('utc').value,",
-    "resolve:(weatherDirty||typedLocationChanged)?1:0,utc:$('utc').value,"
-)
-replace_once(
-    "weatherDirty=false;locationValid=true;\n   toast('Đã lưu vị trí mới');",
-    "weatherDirty=false;locationValid=true;typedLocationChanged=false;\n"
-    "   toast('Đã lưu vị trí mới');"
-)
-replace_once(
-    "const savedTab=localStorage.getItem('smalltvTab')||'home';",
-    "$('city').addEventListener('input',()=>{weatherDirty=true;locationValid=false;"
-    "typedLocationChanged=true;$('locationResult').textContent='Địa điểm đã thay đổi — bấm Lưu cấu hình'});\n"
-    "const savedTab=localStorage.getItem('smalltvTab')||'home';"
+    "resolve:(weatherDirty||typedLocationChanged)?1:0,utc:$('utc').value,",
 )
 
-# Remove any old installed PWA worker and force API requests to bypass cache.
-replace_once(
+if "typedLocationChanged=false" not in text:
+    sub_once(
+        r"weatherDirty=false;locationValid=true;\s*toast\('Đã lưu vị trí mới'\);",
+        "weatherDirty=false;locationValid=true;typedLocationChanged=false;\n"
+        "   toast('Đã lưu vị trí mới');",
+    )
+
+if "Địa điểm đã thay đổi — bấm Lưu cấu hình" not in text:
+    sub_once(
+        r"const savedTab=localStorage\.getItem\('smalltvTab'\)\|\|'home';",
+        "$('city').addEventListener('input',()=>{weatherDirty=true;locationValid=false;"
+        "typedLocationChanged=true;$('locationResult').textContent='Địa điểm đã thay đổi — bấm Lưu cấu hình'});\n"
+        "const savedTab=localStorage.getItem('smalltvTab')||'home';",
+    )
+
+# Bypass browser cache and unregister any old PWA worker.
+text = text.replace(
     "async function req(url,opt={}){const r=await fetch(url,opt);",
-    "async function req(url,opt={}){opt.cache='no-store';const r=await fetch(url,opt);"
+    "async function req(url,opt={}){opt.cache='no-store';const r=await fetch(url,opt);",
 )
-replace_once(
-    "if('serviceWorker' in navigator){\n navigator.serviceWorker.register('/sw.js').catch(()=>{})\n}",
-    "if('serviceWorker' in navigator){\n navigator.serviceWorker.getRegistrations().then(list=>list.forEach(r=>r.unregister())).catch(()=>{})\n}"
+sub_once(
+    r"if\('serviceWorker' in navigator\)\{\s*navigator\.serviceWorker\.(?:register\('/sw\.js'\)|getRegistrations\(\)\.then\(list=>list\.forEach\(r=>r\.unregister\(\)\)\))\.catch\(\(\)=>\{\}\)\s*\}",
+    "if('serviceWorker' in navigator){\n navigator.serviceWorker.getRegistrations().then(list=>list.forEach(r=>r.unregister())).catch(()=>{})\n}",
+    required=False,
 )
 
-# A manual Mochi selection must draw frame zero immediately. Without this,
-# entering the page with a nonzero animation counter could leave eyes/mouth blank.
-replace_once(
-    "    lastMochiBlink = false;\n    forcePageRedraw = true;",
-    "    lastMochiBlink = false;\n    mochiAnimationFrame = 0;\n    forcePageRedraw = true;"
-)
-replace_once(
-    "  if (!mochiScreenReady || lastRenderedMochiExpression != expression) {\n    drawMochiStaticShell(expression);\n  }\n\n  mochiAnimationFrame++;",
-    "  if (!mochiScreenReady || lastRenderedMochiExpression != expression) {\n"
+# Manual selection already resets the frame in V8.0.16. Do not add duplicate
+# assignments; only ensure the renderer draws frame zero after rebuilding shell.
+sub_once(
+    r"if \(!mochiScreenReady \|\| lastRenderedMochiExpression != expression\) \{\s*"
+    r"drawMochiStaticShell\(expression\);\s*\}\s*mochiAnimationFrame\+\+;",
+    "if (!mochiScreenReady || lastRenderedMochiExpression != expression) {\n"
     "    drawMochiStaticShell(expression);\n"
     "    mochiAnimationFrame = 0;\n"
     "    drawMochiFaceFrame(expression, 0);\n"
     "    return;\n"
-    "  }\n\n  mochiAnimationFrame++;"
+    "  }\n\n  mochiAnimationFrame++;",
+    flags=re.S,
+    required=False,
 )
 
-# Synchronous HTTP calls can block the loop for seconds. Defer weather, AQI and
-# crypto polling while Mochi is visible so animation timing remains consistent.
-replace_once(
-    "  if (weatherRefreshRequested) {",
-    "  if (weatherRefreshRequested && currentPage != 2) {"
+# Avoid long synchronous network calls while Mochi is visible.
+text = text.replace("if (weatherRefreshRequested) {",
+                    "if (weatherRefreshRequested && currentPage != 2) {")
+text = text.replace(
+    "if (now - lastWeatherUpdate >= (unsigned long)cfg.weatherIntervalMinutes * 60000UL) {",
+    "if (currentPage != 2 && now - lastWeatherUpdate >= (unsigned long)cfg.weatherIntervalMinutes * 60000UL) {",
 )
-replace_once(
-    "  if (now - lastWeatherUpdate >= (unsigned long)cfg.weatherIntervalMinutes * 60000UL) {",
-    "  if (currentPage != 2 && now - lastWeatherUpdate >= (unsigned long)cfg.weatherIntervalMinutes * 60000UL) {"
+text = text.replace(
+    "if (now - lastAirQualityUpdate >= (unsigned long)cfg.aqiIntervalMinutes * 60000UL) {",
+    "if (currentPage != 2 && now - lastAirQualityUpdate >= (unsigned long)cfg.aqiIntervalMinutes * 60000UL) {",
 )
-replace_once(
-    "  if (now - lastAirQualityUpdate >= (unsigned long)cfg.aqiIntervalMinutes * 60000UL) {",
-    "  if (currentPage != 2 && now - lastAirQualityUpdate >= (unsigned long)cfg.aqiIntervalMinutes * 60000UL) {"
-)
-replace_once(
-    "  if (lastCryptoUpdate == 0 ||\n      now - lastCryptoUpdate >= (unsigned long)cfg.cryptoIntervalSeconds * 1000UL) {",
-    "  if (currentPage != 2 && (lastCryptoUpdate == 0 ||\n"
-    "      now - lastCryptoUpdate >= (unsigned long)cfg.cryptoIntervalSeconds * 1000UL)) {"
+text = text.replace(
+    "if (lastCryptoUpdate == 0 ||\n      now - lastCryptoUpdate >= (unsigned long)cfg.cryptoIntervalSeconds * 1000UL) {",
+    "if (currentPage != 2 && (lastCryptoUpdate == 0 ||\n"
+    "      now - lastCryptoUpdate >= (unsigned long)cfg.cryptoIntervalSeconds * 1000UL)) {",
 )
 
-for required in (
+# Final structural checks. These verify behavior, not fragile whitespace.
+required_markers = (
     'FW_VERSION = "8.0.17"',
-    "typedLocationChanged=true",
+    'MOCHI_FRAME_INTERVAL_MS = 80UL',
+    'typedLocationChanged=true',
+    'resolve:(weatherDirty||typedLocationChanged)?1:0',
     "opt.cache='no-store'",
-    "weatherRefreshRequested && currentPage != 2",
-    "currentPage != 2 && (lastCryptoUpdate == 0",
-    "MOCHI_FRAME_INTERVAL_MS = 80UL",
-):
-    if required not in text:
-        raise RuntimeError(f"V8.0.17 verification failed: {required}")
+    'weatherRefreshRequested && currentPage != 2',
+    'currentPage != 2 && (lastCryptoUpdate == 0',
+    'HTTP_GET, handleMochiSelection',
+)
+missing = [marker for marker in required_markers if marker not in text]
+if missing:
+    raise RuntimeError("V8.0.17 verification failed: " + ", ".join(missing))
 
 SOURCE.write_text(text, encoding="utf-8")
 print("Applied and verified SmallTV V8.0.17 final fixes")
