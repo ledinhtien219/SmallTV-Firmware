@@ -5,45 +5,86 @@ on:
   push:
     branches:
       - main
+    paths:
+      - "**.ino"
+      - ".github/workflows/build.yml"
+  pull_request:
+    paths:
+      - "**.ino"
+      - ".github/workflows/build.yml"
+
+concurrency:
+  group: firmware-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  ARDUINO_CORE_VERSION: "3.1.2"
+  FIRMWARE_VERSION: "8.0.11"
+  SKETCH_SOURCE: ESP8266_SmallTV_Pro_V8_0_11_Compile_Fix.ino
+  SKETCH_DIR: SmallTV
+  BUILD_DIR: build
 
 jobs:
   build:
+    name: Compile ESP8266 firmware
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
+
+      - name: Cache Arduino packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.arduino15
+            ~/Arduino/libraries
+          key: arduino-esp8266-${{ runner.os }}-${{ env.ARDUINO_CORE_VERSION }}
 
       - name: Install Arduino CLI
         uses: arduino/setup-arduino-cli@v2
 
       - name: Install ESP8266 core
         run: |
-          arduino-cli config init
+          arduino-cli config init --overwrite
           arduino-cli config add board_manager.additional_urls \
             https://arduino.esp8266.com/stable/package_esp8266com_index.json
           arduino-cli core update-index
-          arduino-cli core install esp8266:esp8266@3.1.2
+          arduino-cli core install "esp8266:esp8266@${ARDUINO_CORE_VERSION}"
 
       - name: Prepare sketch folder
         run: |
-          mkdir -p SmallTV
-          cp ESP8266_SmallTV_Pro_V8_0_11_Compile_Fix.ino SmallTV/SmallTV.ino
+          test -f "${SKETCH_SOURCE}"
+          mkdir -p "${SKETCH_DIR}"
+          cp "${SKETCH_SOURCE}" "${SKETCH_DIR}/${SKETCH_DIR}.ino"
 
       - name: Compile firmware
         run: |
-          mkdir -p build
+          mkdir -p "${BUILD_DIR}"
           arduino-cli compile \
             --fqbn esp8266:esp8266:generic:eesz=4M2M,FlashMode=dio \
-            --output-dir build \
-            SmallTV
+            --warnings all \
+            --export-binaries \
+            --output-dir "${BUILD_DIR}" \
+            "${SKETCH_DIR}"
 
-      - name: Rename firmware
+      - name: Package firmware
         run: |
-          cp build/SmallTV.ino.bin build/SmallTV_V8_0_11.bin
+          cp "${BUILD_DIR}/${SKETCH_DIR}.ino.bin" \
+            "${BUILD_DIR}/SmallTV_V${FIRMWARE_VERSION//./_}.bin"
+          sha256sum "${BUILD_DIR}/SmallTV_V${FIRMWARE_VERSION//./_}.bin" \
+            > "${BUILD_DIR}/SmallTV_V${FIRMWARE_VERSION//./_}.sha256"
 
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SmallTV-Firmware-V8.0.11
-          path: build/SmallTV_V8_0_11.bin
+          name: SmallTV-Firmware-V${{ env.FIRMWARE_VERSION }}
+          path: |
+            build/SmallTV_V*.bin
+            build/SmallTV_V*.sha256
+          if-no-files-found: error
+          retention-days: 30
