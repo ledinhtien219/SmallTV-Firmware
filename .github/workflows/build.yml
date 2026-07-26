@@ -22,8 +22,8 @@ permissions:
 
 env:
   ARDUINO_CORE_VERSION: "3.1.2"
-  FIRMWARE_VERSION: "8.0.11"
-  SKETCH_SOURCE: ESP8266_SmallTV_Pro_V8_0_11_Compile_Fix.ino
+  FIRMWARE_VERSION: "8.0.15"
+  SKETCH_SOURCE: ESP8266_SmallTV_Pro_V8_0_15_Full_Audit_Fix.ino
   SKETCH_DIR: SmallTV
   BUILD_DIR: build
 
