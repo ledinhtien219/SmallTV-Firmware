@@ -20,7 +20,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   ARDUINO_CORE_VERSION: "3.1.2"
@@ -38,12 +38,32 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Apply and verify V8.0.16 base fixes
-        run: python3 tools/apply_v8_0_15_runtime_fixes.py
+      - name: Apply verified firmware fixes
+        run: |
+          if grep -q 'static const char\* FW_VERSION = "8.0.15";' "${SKETCH_SOURCE}"; then
+            python3 tools/apply_v8_0_15_runtime_fixes.py
+          fi
+          python3 tools/apply_v8_0_17_final_fixes.py
+          grep -F 'static const char* FW_VERSION = "8.0.17";' "${SKETCH_SOURCE}"
+          grep -F 'typedLocationChanged=true' "${SKETCH_SOURCE}"
+          grep -F 'HTTP_GET, handleMochiSelection' "${SKETCH_SOURCE}"
+          grep -F 'MOCHI_FRAME_INTERVAL_MS = 80UL' "${SKETCH_SOURCE}"
 
-      - name: Apply and verify V8.0.17 final fixes
-        run: python3 tools/apply_v8_0_17_final_fixes.py
+      - name: Commit verified source to main
+        if: github.event_name != 'pull_request'
+        run: |
+          if git diff --quiet -- "${SKETCH_SOURCE}"; then
+            echo "Firmware source is already materialized."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "${SKETCH_SOURCE}"
+          git commit -m "Materialize verified SmallTV firmware V8.0.17"
+          git push origin HEAD:main
 
       - name: Cache Arduino packages
         uses: actions/cache@v4
@@ -86,6 +106,7 @@ jobs:
             "${BUILD_DIR}/SmallTV_V${FIRMWARE_VERSION//./_}.bin"
           sha256sum "${BUILD_DIR}/SmallTV_V${FIRMWARE_VERSION//./_}.bin" \
             > "${BUILD_DIR}/SmallTV_V${FIRMWARE_VERSION//./_}.sha256"
+          cp "${SKETCH_SOURCE}" "${BUILD_DIR}/SmallTV_V${FIRMWARE_VERSION//./_}.ino"
 
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
@@ -94,5 +115,6 @@ jobs:
           path: |
             build/SmallTV_V*.bin
             build/SmallTV_V*.sha256
+            build/SmallTV_V*.ino
           if-no-files-found: error
           retention-days: 30
