@@ -45,10 +45,10 @@ jobs:
 
       - name: Rename firmware
         run: |
-          cp build/SmallTV.ino.bin build/SmallTV_V8_0_0.bin
+          cp build/SmallTV.ino.bin build/SmallTV_V8_0_3.bin
 
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
         with:
           name: SmallTV-Firmware
-          path: build/SmallTV_V8_0_0.bin
+          path: build/SmallTV_V8_0_3.bin
