@@ -24,7 +24,7 @@
 #include <SPI.h>
 #include <time.h>
 
-static const char* FW_VERSION = "8.0.15";
+static const char* FW_VERSION = "8.0.17";
 static const char* FW_BUILD = __DATE__ " " __TIME__;
 
 // ---------------- LCD ----------------
@@ -99,6 +99,7 @@ void drawOtaErrorScreen(int errorCode);
 bool apMode = false;
 bool ntpOk = false;
 bool weatherOk = false;
+bool weatherRefreshRequested = false;
 
 float currentTemp = 0;
 float apparentTemp = 0;
@@ -131,6 +132,7 @@ int forecastRainChance[7] = {0};
 bool forecastValid = false;
 
 unsigned long lastMochiAnimation = 0;
+const unsigned long MOCHI_FRAME_INTERVAL_MS = 80UL;
 uint8_t mochiAnimationFrame = 0;
 bool mochiScreenReady = false;
 uint8_t lastRenderedMochiExpression = 255;
@@ -985,63 +987,62 @@ void drawMochiFaceFrame(uint8_t expression, uint8_t frame) {
   const uint16_t body = RGB565(245, 244, 239);
   const int eyeY = 120;
   const int mouthY = 158;
-  bool blink = (frame % 30 == 27 || frame % 30 == 28);
-
-  // Clear only dynamic regions. This avoids full-screen flashing.
-  fillRect(72, 103, 96, 30, body);   // eyes and eyebrows
-  fillRect(99, 148, 42, 30, body);   // mouth
-  fillRect(145, 126, 18, 42, body);  // tear area
-  fillRect(16, 61, 24, 70, COL_BG);  // left sparkle
-  fillRect(199, 55, 27, 82, COL_BG); // right sparkle
-  fillRect(146, 48, 50, 48, COL_BG); // floating Z / hearts
-  fillRect(44, 48, 28, 35, COL_BG);  // left heart
-
-  if (blink && expression != 3 && expression != 4) {
-    fillRoundRect(77, eyeY, 20, 3, 1, COL_LINE);
-    fillRoundRect(141, eyeY, 20, 3, 1, COL_LINE);
-  } else {
-    drawMochiEye(87, eyeY, expression);
-    drawMochiEye(151, eyeY, expression);
+  bool blink = (frame % 60 == 54 || frame % 60 == 55 || frame % 60 == 56);
+  bool firstFrame = (frame == 0);
+  if (firstFrame || blink != lastMochiBlink) {
+    fillRect(72, 103, 96, 30, body);
+    if (blink && expression != 3 && expression != 4) {
+      fillRoundRect(77, eyeY, 20, 3, 1, COL_LINE);
+      fillRoundRect(141, eyeY, 20, 3, 1, COL_LINE);
+    } else {
+      drawMochiEye(87, eyeY, expression);
+      drawMochiEye(151, eyeY, expression);
+    }
   }
-
-  if (expression == 1 || expression == 6) {
-    fillRect(105, mouthY - 7, 28, 3, COL_LINE);
-    fillRect(109, mouthY - 4, 20, 3, COL_LINE);
-    fillRect(114, mouthY - 1, 10, 3, COL_LINE);
-  } else if (expression == 2) {
-    fillRect(110, mouthY + 2, 18, 3, COL_LINE);
-    fillRect(106, mouthY - 1, 4, 3, COL_LINE);
-    fillRect(128, mouthY - 1, 4, 3, COL_LINE);
-    int tearY = 132 + (frame % 8) * 4;
-    if (tearY > 160) tearY = 132;
-    fillCircle(153, tearY, 3, RGB565(68, 162, 255));
+  if (firstFrame) {
+    fillRect(99, 148, 42, 30, body);
+    if (expression == 1 || expression == 6) {
+      fillRect(105, mouthY - 7, 28, 3, COL_LINE);
+      fillRect(109, mouthY - 4, 20, 3, COL_LINE);
+      fillRect(114, mouthY - 1, 10, 3, COL_LINE);
+    } else if (expression == 2) {
+      fillRect(110, mouthY + 2, 18, 3, COL_LINE);
+      fillRect(106, mouthY - 1, 4, 3, COL_LINE);
+      fillRect(128, mouthY - 1, 4, 3, COL_LINE);
+    } else if (expression == 3) {
+      drawText(108, mouthY - 7, "Z", COL_ACCENT, body, 2);
+    } else if (expression == 4) {
+      fillCircle(119, mouthY, 9, COL_LINE);
+      fillCircle(119, mouthY - 1, 4, body);
+    } else if (expression == 5) {
+      fillRect(107, mouthY + 1, 24, 4, COL_LINE);
+      fillRect(76, eyeY - 10, 22, 3, COL_LINE);
+      fillRect(140, eyeY - 10, 22, 3, COL_LINE);
+    }
+  }
+  if (expression == 2) {
+    fillRect(145, 126, 18, 42, body);
+    fillCircle(153, 132 + (frame % 30), 3, RGB565(68, 162, 255));
   } else if (expression == 3) {
-    drawText(108, mouthY - 7, "Z", COL_ACCENT, body, 2);
-    int phase = frame % 12;
-    drawText(151 + phase, 86 - phase * 2, "Z", COL_ACCENT, COL_BG, 1);
-  } else if (expression == 4) {
-    fillCircle(119, mouthY, 9, COL_LINE);
-    fillCircle(119, mouthY - 1, 4, body);
-  } else if (expression == 5) {
-    fillRect(107, mouthY + 1, 24, 4, COL_LINE);
-    fillRect(76, eyeY - 10, 22, 3, COL_LINE);
-    fillRect(140, eyeY - 10, 22, 3, COL_LINE);
-  }
-
-  if (expression == 6) {
-    int phase = frame % 10;
-    int heartY = 72 - phase * 2;
+    fillRect(146, 48, 50, 48, COL_BG);
+    int phase = frame % 36;
+    drawText(151 + phase / 3, 86 - phase, "Z", COL_ACCENT, COL_BG, 1);
+  } else if (expression == 6) {
+    fillRect(44, 48, 28, 35, COL_BG);
+    fillRect(174, 55, 28, 42, COL_BG);
+    int phase = frame % 30;
+    int heartY = 72 - phase;
     fillCircle(54, heartY, 5, RGB565(255, 88, 130));
     fillCircle(61, heartY, 5, RGB565(255, 88, 130));
     fillRect(52, heartY, 12, 7, RGB565(255, 88, 130));
     fillCircle(183, heartY + 12, 4, RGB565(255, 88, 130));
     fillCircle(189, heartY + 12, 4, RGB565(255, 88, 130));
     fillRect(181, heartY + 12, 10, 6, RGB565(255, 88, 130));
-  }
-
-  if (expression == 1) {
-    uint8_t phase = frame % 16;
-    if (phase < 8) {
+  } else if (expression == 1) {
+    fillRect(16, 61, 24, 70, COL_BG);
+    fillRect(199, 55, 27, 82, COL_BG);
+    uint8_t phase = frame % 32;
+    if (phase < 16) {
       drawText(25, 90, "*", COL_TEMP, COL_BG, 2);
       drawText(202, 75, "*", COL_ACCENT, COL_BG, 2);
     } else {
@@ -1049,7 +1050,6 @@ void drawMochiFaceFrame(uint8_t expression, uint8_t frame) {
       drawText(205, 95, "*", COL_TEMP, COL_BG, 1);
     }
   }
-
   lastMochiBlink = blink;
 }
 
@@ -1061,7 +1061,8 @@ void drawMochiPage() {
     drawMochiStaticShell(expression);
   }
 
-  drawMochiFaceFrame(expression, mochiAnimationFrame);
+  mochiAnimationFrame = 0;
+  drawMochiFaceFrame(expression, 0);
 }
 
 void animateMochiFrame() {
@@ -1070,6 +1071,9 @@ void animateMochiFrame() {
   uint8_t expression = resolvedMochiExpression();
   if (!mochiScreenReady || lastRenderedMochiExpression != expression) {
     drawMochiStaticShell(expression);
+    mochiAnimationFrame = 0;
+    drawMochiFaceFrame(expression, 0);
+    return;
   }
 
   mochiAnimationFrame++;
@@ -1905,7 +1909,7 @@ button,input,select{font:inherit}.app{max-width:980px;margin:auto;min-height:100
 section{display:none}section.active{display:block}.pagehead{display:flex;align-items:center;gap:12px;margin:10px 4px 16px}.pageicon{font-size:24px;color:#8d68ff}.pagehead h2{font-size:22px;margin:0}.pagehead p{margin:3px 0 0;color:var(--muted);font-size:13px}.card{background:linear-gradient(145deg,rgba(22,38,51,.98),rgba(15,28,39,.98));border:1px solid var(--line);border-radius:18px;padding:17px;margin-top:13px;box-shadow:0 15px 38px rgba(0,0,0,.2)}.cardTitle{font-weight:850;font-size:16px;margin-bottom:12px;display:flex;align-items:center;gap:9px}.subcard{background:rgba(8,18,28,.48);border:1px solid #23394a;border-radius:15px;padding:14px}.hero{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center}.temp{font-size:52px;font-weight:900;letter-spacing:-2px}.weatherEmoji{font-size:62px;filter:drop-shadow(0 6px 12px rgba(0,0,0,.35))}
 .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px}.metric{min-width:0}.metric span{color:var(--muted);font-size:12px}.metric b{display:block;font-size:20px;margin-top:5px;overflow-wrap:anywhere}.stat{background:#0e1b26;border:1px solid #243c4e;border-radius:14px;padding:14px}.accent{color:#60a0ff!important}.good{color:#39d99d!important}.warn{color:#ffc15c!important}.muted{color:var(--muted);font-size:13px;line-height:1.5}
 label{display:block;color:#c9d7e2;font-size:13px;margin:13px 0 6px}input,select{width:100%;border:1px solid #365268;border-radius:12px;padding:13px 14px;background:#0b1721;color:#fff;outline:0;transition:.2s}input:focus,select:focus{border-color:#7651ff;box-shadow:0 0 0 3px rgba(118,81,255,.15)}input[readonly]{color:#37d79d;font-weight:800;background:#0c1b24}.inputrow{display:grid;grid-template-columns:1fr auto;gap:9px;align-items:end}.toggle{display:flex;align-items:center;justify-content:space-between;gap:15px;border-bottom:1px solid rgba(55,79,96,.55);padding:14px 0}.toggle:last-child{border-bottom:0}.toggle input{width:22px;height:22px;accent-color:#7045ff}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}button,.btn{border:1px solid #304b60;border-radius:12px;padding:11px 16px;background:#1c3243;color:#fff;font-weight:800;cursor:pointer;transition:.16s}button:active{transform:scale(.98)}button.primary{border:0;background:linear-gradient(135deg,#7545ff,#3d79ff);box-shadow:0 9px 22px rgba(92,67,255,.24)}button.success{border:0;background:linear-gradient(135deg,#139b73,#27c897)}button.danger{border-color:#70404a;color:#ff9aa3;background:#301b24}.wide{width:100%}
-.info{margin-top:13px;padding:13px 14px;border-radius:13px;border:1px solid rgba(121,77,255,.65);border-left:4px solid #8c55ff;background:rgba(84,54,163,.09);color:#cbd6e4;font-size:13px;line-height:1.6}.locationStatus{margin-top:12px;padding:10px 12px;border-radius:11px;background:#0d1b27;border:1px solid #294155;color:#91abc0;font-size:13px}.coordHead{display:flex;align-items:center;justify-content:space-between}.badge{padding:6px 10px;border-radius:20px;font-size:12px;font-weight:800;background:rgba(27,196,137,.13);color:#3bdba1;border:1px solid rgba(27,196,137,.28)}
+.mochiBtn.selected{outline:2px solid #55d9f0;background:#18394a;box-shadow:0 0 0 3px rgba(85,217,240,.14)}.info{margin-top:13px;padding:13px 14px;border-radius:13px;border:1px solid rgba(121,77,255,.65);border-left:4px solid #8c55ff;background:rgba(84,54,163,.09);color:#cbd6e4;font-size:13px;line-height:1.6}.locationStatus{margin-top:12px;padding:10px 12px;border-radius:11px;background:#0d1b27;border:1px solid #294155;color:#91abc0;font-size:13px}.coordHead{display:flex;align-items:center;justify-content:space-between}.badge{padding:6px 10px;border-radius:20px;font-size:12px;font-weight:800;background:rgba(27,196,137,.13);color:#3bdba1;border:1px solid rgba(27,196,137,.28)}
 .mochiGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.mochiBtn{min-height:76px;font-size:15px;background:#102130}.mochiBtn span{display:block;font-size:28px;margin-bottom:4px}.systemActions button{flex:1 1 180px}.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#eefaf4;color:#173d2b;padding:11px 18px;border-radius:30px;display:none;z-index:30;box-shadow:0 12px 35px rgba(0,0,0,.35);font-weight:750;max-width:90%;text-align:center}
 @media(min-width:680px){.app{padding:16px 20px 45px}.grid.four{grid-template-columns:repeat(4,1fr)}.grid.three{grid-template-columns:repeat(3,1fr)}.mochiGrid{grid-template-columns:repeat(4,1fr)}}
 @media(max-width:520px){.app{padding:8px 9px 28px}.top{margin-left:-2px;margin-right:-2px}.card{padding:14px}.inputrow{grid-template-columns:1fr}.inputrow button{width:100%}.temp{font-size:45px}.brand h1{font-size:19px}.logo{width:39px;height:39px}.actions button{flex:1 1 auto}.grid.mobileOne{grid-template-columns:1fr}}
@@ -1929,7 +1933,7 @@ label{display:block;color:#c9d7e2;font-size:13px;margin:13px 0 6px}input,select{
 <div class="card"><div class="cardTitle" style="color:#62a0ff">⚙️ CÀI ĐẶT KHÁC</div><label>UTC offset (phút)</label><input id="utc" type="number"><div class="muted">Giờ Việt Nam: UTC+7 = 420 phút</div><div class="grid mobileOne"><div><label>Cập nhật dự báo 7 ngày (1–60 phút)</label><input id="weatherInterval" type="number" min="1" max="60"></div><div><label>Cập nhật AQI (1–60 phút)</label><input id="aqiInterval" type="number" min="1" max="60"></div></div></div>
 <div class="card"><div class="cardTitle" style="color:#4e93ff">🔄 TRẠNG THÁI CẬP NHẬT</div><div class="grid mobileOne"><div class="subcard metric"><span>🌤️ Thời tiết lần cuối</span><b id="weatherLast">Chưa có</b><span>Lần tiếp theo: <b id="weatherNext" class="accent">--</b></span></div><div class="subcard metric"><span>🍃 AQI lần cuối</span><b id="aqiLast">Chưa có</b><span>Lần tiếp theo: <b id="aqiNext" class="accent">--</b></span></div></div><div class="actions"><button class="primary" onclick="saveWeather()">💾 Lưu cấu hình</button><button class="success" onclick="fetchNow()">⟳ Cập nhật ngay</button></div></div></section>
 
-<section id="mochi"><div class="pagehead"><div class="pageicon">☺</div><div><h2>MOCHI BIỂU CẢM</h2><p>Chọn tâm trạng cho màn hình SmallTV</p></div></div><div class="card"><div class="cardTitle">😊 Chọn biểu cảm</div><div class="mochiGrid"><button class="mochiBtn" onclick="setMochi(0)"><span>✨</span>Tự động</button><button class="mochiBtn" onclick="setMochi(1)"><span>😊</span>Vui</button><button class="mochiBtn" onclick="setMochi(2)"><span>😢</span>Buồn</button><button class="mochiBtn" onclick="setMochi(3)"><span>😴</span>Ngủ</button><button class="mochiBtn" onclick="setMochi(4)"><span>😮</span>Ngạc nhiên</button><button class="mochiBtn" onclick="setMochi(5)"><span>😠</span>Giận</button><button class="mochiBtn" onclick="setMochi(6)"><span>😍</span>Yêu thích</button><button class="primary mochiBtn" onclick="showMochi()"><span>📺</span>Hiện ngay</button></div><div class="info">Ở chế độ tự động: ban đêm Mochi ngủ, trời mưa Mochi buồn và AQI xấu Mochi sẽ khó chịu.</div></div></section>
+<section id="mochi"><div class="pagehead"><div class="pageicon">☺</div><div><h2>MOCHI BIỂU CẢM</h2><p>Chọn tâm trạng cho màn hình SmallTV</p></div></div><div class="card"><div class="cardTitle">😊 Chọn biểu cảm</div><div class="mochiGrid"><button type="button" class="mochiBtn" data-expression="0" onclick="setMochi(0,this)"><span>✨</span>Tự động</button><button type="button" class="mochiBtn" data-expression="1" onclick="setMochi(1,this)"><span>😊</span>Vui</button><button type="button" class="mochiBtn" data-expression="2" onclick="setMochi(2,this)"><span>😢</span>Buồn</button><button type="button" class="mochiBtn" data-expression="3" onclick="setMochi(3,this)"><span>😴</span>Ngủ</button><button type="button" class="mochiBtn" data-expression="4" onclick="setMochi(4,this)"><span>😮</span>Ngạc nhiên</button><button type="button" class="mochiBtn" data-expression="5" onclick="setMochi(5,this)"><span>😠</span>Giận</button><button type="button" class="mochiBtn" data-expression="6" onclick="setMochi(6,this)"><span>😍</span>Yêu thích</button><button type="button" class="primary mochiBtn" onclick="showMochi()"><span>📺</span>Hiện ngay</button></div><div class="info">Ở chế độ tự động: ban đêm Mochi ngủ, trời mưa Mochi buồn và AQI xấu Mochi sẽ khó chịu.</div></div></section>
 
 
 <section id="crypto"><div class="pagehead"><div class="pageicon">₿</div><div><h2>GIÁ TIỀN MÃ HÓA</h2><p>Giá được cập nhật và hiển thị trực tiếp trên màn hình SmallTV</p></div></div>
@@ -1947,12 +1951,12 @@ label{display:block;color:#c9d7e2;font-size:13px;margin:13px 0 6px}input,select{
 <section id="system"><div class="pagehead"><div class="pageicon">⚙</div><div><h2>HỆ THỐNG</h2><p>Thông tin thiết bị và bảo trì</p></div></div><div class="card"><div class="cardTitle">📊 Thông tin thiết bị</div><div class="grid three"><div class="stat metric"><span>Địa chỉ IP</span><b id="ip">--</b></div><div class="stat metric"><span>Tín hiệu Wi-Fi</span><b id="rssi">--</b></div><div class="stat metric"><span>Bộ nhớ trống</span><b id="heap">--</b></div><div class="stat metric"><span>Thời gian hoạt động</span><b id="uptime">--</b></div><div class="stat metric"><span>Firmware</span><b id="firmware">--</b></div><div class="stat metric"><span>Ngày build</span><b id="build">--</b></div></div></div><div class="card"><div class="cardTitle">🛠️ Công cụ hệ thống</div><div class="actions systemActions"><button onclick="refresh()">⟳ Làm mới</button><button onclick="enableSetupAp()">📡 Bật Setup AP 10 phút</button><button class="primary" onclick="location.href='/update'">⬆ OTA Firmware</button><button class="danger" onclick="reboot()">⏻ Khởi động lại</button></div></div></section>
 </div><div id="toast" class="toast"></div>
 <script>
-const $=id=>document.getElementById(id);let weatherDirty=false;let locationValid=false;
+const $=id=>document.getElementById(id);let weatherDirty=false;let locationValid=false;let typedLocationChanged=false;
 function tab(id,btn){document.querySelectorAll('section').forEach(x=>x.classList.remove('active'));$(id).classList.add('active');document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('activeTab'));(btn||document.querySelector('[data-tab="'+id+'"]'))?.classList.add('activeTab');localStorage.setItem('smalltvTab',id)}
 function toast(t){$('toast').textContent=t;$('toast').style.display='block';setTimeout(()=>$('toast').style.display='none',2200)}
-async function req(url,opt={}){const r=await fetch(url,opt);if(!r.ok)throw Error(await r.text());return r.json()}
+async function req(url,opt={}){opt.cache='no-store';const r=await fetch(url,opt);if(!r.ok)throw Error(await r.text());return r.json()}
 async function go(url){await req(url);await refresh();toast('Đã chuyển trang')}
-async function refresh(){try{const s=await req('/api/status');$('online').style.background='#20c88a';$('cityView').textContent=s.city;$('temp').textContent=s.temperature.toFixed(1);$('desc').textContent=s.weather;$('hum').textContent=s.humidity+'%';$('wind').textContent=s.wind_speed.toFixed(1)+' km/h';$('aqi').textContent=s.aqi;$('page').textContent=s.page===0?'Đồng hồ':(s.page===1?'Thời tiết':(s.page===2?'Mochi':'Crypto'));if(!weatherDirty){$('city').value=s.city;$('lat').value=s.latitude;$('lon').value=s.longitude;$('utc').value=s.utc_offset;locationValid=true}$('weatherInterval').value=s.weather_interval;$('aqiInterval').value=s.aqi_interval;$('weatherLast').textContent=s.weather_last;$('weatherNext').textContent=s.weather_next;$('aqiLast').textContent=s.aqi_last;$('aqiNext').textContent=s.aqi_next;$('autoPage').checked=s.auto_page;$('interval').value=s.page_interval;$('colonBlink').checked=s.colon_blink;$('use12Hour').checked=s.use_12_hour;$('clockColor').value=s.clock_color;$('dateColor').value=s.date_color;$('clockHex').textContent=s.clock_color.toUpperCase();$('dateHex').textContent=s.date_color.toUpperCase();$('ssid').value=s.saved_ssid;$('ip').textContent=s.ip;$('rssi').textContent=s.rssi+' dBm';$('heap').textContent=Math.round(s.free_heap/1024)+' KB';$('firmware').textContent=s.firmware||'--';$('build').textContent=s.build||'--';$('uptime').textContent=Math.floor(s.uptime/60)+' phút';$('wifiState').textContent=s.wifi_state;$('ssidView').textContent=s.connected_ssid||s.ap_ssid||'--';$('ipView').textContent=s.ip;$('rssiView').textContent=s.ap_mode?'AP':s.rssi+' dBm';$('netline').textContent=s.ap_mode?('AP '+s.ap_ssid+' · 192.168.4.1'):(s.wifi_state+' · '+(s.connected_ssid||s.saved_ssid)+' · '+s.ip);
+async function refresh(){try{const s=await req('/api/status');$('online').style.background='#20c88a';$('cityView').textContent=s.city;$('temp').textContent=s.temperature.toFixed(1);$('desc').textContent=s.weather;$('hum').textContent=s.humidity+'%';$('wind').textContent=s.wind_speed.toFixed(1)+' km/h';$('aqi').textContent=s.aqi;$('page').textContent=s.page===0?'Đồng hồ':(s.page===1?'Thời tiết':(s.page===2?'Mochi':'Crypto'));markMochiSelection(s.mochi_expression||0);if(!weatherDirty){$('city').value=s.city;$('lat').value=s.latitude;$('lon').value=s.longitude;$('utc').value=s.utc_offset;locationValid=true}$('weatherInterval').value=s.weather_interval;$('aqiInterval').value=s.aqi_interval;$('weatherLast').textContent=s.weather_last;$('weatherNext').textContent=s.weather_next;$('aqiLast').textContent=s.aqi_last;$('aqiNext').textContent=s.aqi_next;$('autoPage').checked=s.auto_page;$('interval').value=s.page_interval;$('colonBlink').checked=s.colon_blink;$('use12Hour').checked=s.use_12_hour;$('clockColor').value=s.clock_color;$('dateColor').value=s.date_color;$('clockHex').textContent=s.clock_color.toUpperCase();$('dateHex').textContent=s.date_color.toUpperCase();$('ssid').value=s.saved_ssid;$('ip').textContent=s.ip;$('rssi').textContent=s.rssi+' dBm';$('heap').textContent=Math.round(s.free_heap/1024)+' KB';$('firmware').textContent=s.firmware||'--';$('build').textContent=s.build||'--';$('uptime').textContent=Math.floor(s.uptime/60)+' phút';$('wifiState').textContent=s.wifi_state;$('ssidView').textContent=s.connected_ssid||s.ap_ssid||'--';$('ipView').textContent=s.ip;$('rssiView').textContent=s.ap_mode?'AP':s.rssi+' dBm';$('netline').textContent=s.ap_mode?('AP '+s.ap_ssid+' · 192.168.4.1'):(s.wifi_state+' · '+(s.connected_ssid||s.saved_ssid)+' · '+s.ip);
 if($('cryptoSymbols')){$('cryptoSymbols').value=s.crypto_symbols||'BTC,ETH,DOGE';$('cryptoInterval').value=s.crypto_interval||30;for(let i=0;i<3;i++){const q=(s.crypto||[])[i];$('coin'+i).textContent=q&&q.valid?(q.symbol+' $'+q.usd+' ('+(q.change>=0?'+':'')+q.change+'%)'):(q?q.symbol:'--')}}}catch(e){$('online').style.background='#ff5d69'}}
 async function post(url,data){return req(url,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(data)})}
 async function saveDisplay(){const payload={autoPage:$('autoPage').checked?1:0,interval:$('interval').value,colonBlink:$('colonBlink').checked?1:0,use12Hour:$('use12Hour').checked?1:0,clockColor:$('clockColor').value.toUpperCase(),dateColor:$('dateColor').value.toUpperCase()};const result=await post('/api/display',payload);if(result.clock_color)$('clockColor').value=result.clock_color;if(result.date_color)$('dateColor').value=result.date_color;toast('Đã lưu cài đặt hiển thị');await refresh()}
@@ -1998,20 +2002,27 @@ function usePhoneLocation(){
 }
 
 async function saveWeather(){
- if(!locationValid){
-  if(!await findLocation(false))return
+ const city=$('city').value.trim();
+ if(city.length<2){toast('Hãy nhập tên địa điểm');return}
+ toast('Đang xác định và lưu vị trí...');
+ try{
+  const result=await post('/api/weather',{
+   city:city,lat:$('lat').value,lon:$('lon').value,
+   resolve:(weatherDirty||typedLocationChanged)?1:0,utc:$('utc').value,
+   weatherInterval:$('weatherInterval').value,
+   aqiInterval:$('aqiInterval').value
+  });
+  $('city').value=result.city||city;
+  $('lat').value=Number(result.latitude).toFixed(5);
+  $('lon').value=Number(result.longitude).toFixed(5);
+  $('locationResult').textContent='✓ Đã lưu: '+$('city').value+' ('+$('lat').value+', '+$('lon').value+')';
+  weatherDirty=false;locationValid=true;
+  toast('Đã lưu vị trí mới');
+  await refresh()
+ }catch(e){
+  $('locationResult').textContent='Không thể xác định vị trí. Kiểm tra Internet hoặc thử tên tỉnh/thành phố gần nhất.';
+  toast('Không lưu được vị trí mới')
  }
- await post('/api/weather',{
-  city:$('city').value,
-  lat:$('lat').value,
-  lon:$('lon').value,
-  utc:$('utc').value,
-  weatherInterval:$('weatherInterval').value,
-  aqiInterval:$('aqiInterval').value
- });
- weatherDirty=false;locationValid=true;
- toast('Đã lưu vị trí và cấu hình thời tiết');
- await refresh()
 }
 
 async function fetchNow(){
@@ -2023,10 +2034,23 @@ async function fetchNow(){
  }catch(e){toast('Không thể cập nhật thời tiết')}
 }
 
-async function setMochi(expression){
- await post('/api/mochi',{expression});
- toast('Đã đổi biểu cảm Mochi');
- await go('/api/page?value=2')
+function markMochiSelection(expression){
+ document.querySelectorAll('.mochiBtn[data-expression]').forEach(btn=>{
+  btn.classList.toggle('selected',Number(btn.dataset.expression)===Number(expression))
+ })
+}
+async function setMochi(expression,button){
+ markMochiSelection(expression);
+ if(button)button.blur();
+ try{
+  const r=await req('/api/mochi?expression='+encodeURIComponent(expression));
+  markMochiSelection(r.expression);
+  $('page').textContent='Mochi';
+  toast('Đã chọn biểu cảm Mochi')
+ }catch(e){
+  markMochiSelection(-1);
+  toast('Không thể chọn biểu cảm Mochi')
+ }
 }
 
 async function showMochi(){
@@ -2073,12 +2097,13 @@ async function reboot(){
  toast('Đang khởi động lại...')
 }
 
+$('city').addEventListener('input',()=>{weatherDirty=true;locationValid=false;typedLocationChanged=true;$('locationResult').textContent='Địa điểm đã thay đổi — bấm Lưu cấu hình'});
 const savedTab=localStorage.getItem('smalltvTab')||'home';
 tab(savedTab);
 refresh();
 setInterval(refresh,5000);
 if('serviceWorker' in navigator){
- navigator.serviceWorker.register('/sw.js').catch(()=>{})
+ navigator.serviceWorker.getRegistrations().then(list=>list.forEach(r=>r.unregister())).catch(()=>{})
 }
 </script></body></html>
 )HTML");
@@ -2229,14 +2254,30 @@ void startWebServer() {
     server.send(200, "application/json", json);
   });
 
-  server.on("/api/mochi", HTTP_POST, []() {
-    mochiExpression = constrain(server.arg("expression").toInt(), 0, 6);
+  auto handleMochiSelection = []() {
+    if (!server.hasArg("expression")) {
+      server.send(400, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"missing_expression\"}");
+      return;
+    }
+    int requested = server.arg("expression").toInt();
+    if (requested < 0 || requested > 6) {
+      server.send(400, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"invalid_expression\"}");
+      return;
+    }
+    mochiExpression = (uint8_t)requested;
     currentPage = 2;
+    mochiAnimationFrame = 0;
+    lastMochiAnimation = millis();
+    mochiScreenReady = false;
+    lastRenderedMochiExpression = 255;
+    lastMochiBlink = false;
     forcePageRedraw = true;
     lastPageChange = millis();
     String json = "{\"ok\":true,\"expression\":" + String(mochiExpression) + "}";
-    server.send(200, "application/json", json);
-  });
+    server.send(200, "application/json; charset=utf-8", json);
+  };
+  server.on("/api/mochi", HTTP_GET, handleMochiSelection);
+  server.on("/api/mochi", HTTP_POST, handleMochiSelection);
 
   server.on("/api/display", HTTP_POST, []() {
     cfg.autoPage = server.arg("autoPage").toInt() ? 1 : 0;
@@ -2273,22 +2314,39 @@ void startWebServer() {
   server.on("/api/weather", HTTP_POST, []() {
     String submittedLocation = server.arg("city");
     submittedLocation.trim();
-    copyUtf8Safe(cfg.locationName, sizeof(cfg.locationName), submittedLocation);
-    // Keep the legacy short field for LCD/backward compatibility only.
-    copyUtf8Safe(cfg.city, sizeof(cfg.city), submittedLocation);
-    strlcpy(cfg.latitude, server.arg("lat").c_str(), sizeof(cfg.latitude));
-    strlcpy(cfg.longitude, server.arg("lon").c_str(), sizeof(cfg.longitude));
-    cfg.utcOffsetMinutes = server.arg("utc").toInt();
+    if (submittedLocation.length() < 2) {
+      server.send(400, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"missing_location\"}");
+      return;
+    }
+    String resolvedLocation = submittedLocation;
+    float latitude = server.arg("lat").toFloat();
+    float longitude = server.arg("lon").toFloat();
+    bool mustResolve = server.arg("resolve").toInt() != 0 ||
+                       latitude < -90.0f || latitude > 90.0f ||
+                       longitude < -180.0f || longitude > 180.0f ||
+                       (fabs(latitude) < 0.0001f && fabs(longitude) < 0.0001f);
+    if (mustResolve && !geocodeLocation(submittedLocation, resolvedLocation, latitude, longitude)) {
+      server.send(422, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"location_not_found\"}");
+      return;
+    }
+    copyUtf8Safe(cfg.locationName, sizeof(cfg.locationName), resolvedLocation);
+    copyUtf8Safe(cfg.city, sizeof(cfg.city), resolvedLocation);
+    String latitudeText = String(latitude, 5);
+    String longitudeText = String(longitude, 5);
+    strlcpy(cfg.latitude, latitudeText.c_str(), sizeof(cfg.latitude));
+    strlcpy(cfg.longitude, longitudeText.c_str(), sizeof(cfg.longitude));
+    cfg.utcOffsetMinutes = constrain(server.arg("utc").toInt(), -720, 840);
     cfg.weatherIntervalMinutes = constrain(server.arg("weatherInterval").toInt(), 1, 60);
     cfg.aqiIntervalMinutes = constrain(server.arg("aqiInterval").toInt(), 1, 60);
     saveSettings();
     configTime(cfg.utcOffsetMinutes * 60, 0, "pool.ntp.org", "time.nist.gov");
-    if (!apMode) {
-      fetchWeather();
-      fetchAirQuality();
-    }
+    weatherRefreshRequested = !apMode;
     forcePageRedraw = true;
-    sendJsonOk();
+    String json = "{\"ok\":true,";
+    json += "\"city\":\"" + jsonEscape(resolvedLocation) + "\",";
+    json += "\"latitude\":" + latitudeText + ",";
+    json += "\"longitude\":" + longitudeText + "}";
+    server.send(200, "application/json; charset=utf-8", json);
   });
 
   server.on("/api/weather/fetch", HTTP_POST, []() {
@@ -2891,7 +2949,7 @@ void loop() {
     drawFooter(false);
   }
 
-  if (currentPage == 2 && now - lastMochiAnimation >= 125UL) {
+  if (currentPage == 2 && now - lastMochiAnimation >= MOCHI_FRAME_INTERVAL_MS) {
     lastMochiAnimation = now;
     animateMochiFrame();
     forcePageRedraw = false;
@@ -2906,13 +2964,22 @@ void loop() {
     drawPage(true);
   }
 
-  if (now - lastWeatherUpdate >= (unsigned long)cfg.weatherIntervalMinutes * 60000UL) {
+  if (weatherRefreshRequested && currentPage != 2) {
+    weatherRefreshRequested = false;
+    lastWeatherUpdate = now;
+    lastAirQualityUpdate = now;
+    fetchWeather();
+    fetchAirQuality();
+    forcePageRedraw = true;
+  }
+
+  if (currentPage != 2 && now - lastWeatherUpdate >= (unsigned long)cfg.weatherIntervalMinutes * 60000UL) {
     lastWeatherUpdate = now;
     fetchWeather();
     forcePageRedraw = true;
   }
 
-  if (now - lastAirQualityUpdate >= (unsigned long)cfg.aqiIntervalMinutes * 60000UL) {
+  if (currentPage != 2 && now - lastAirQualityUpdate >= (unsigned long)cfg.aqiIntervalMinutes * 60000UL) {
     lastAirQualityUpdate = now;
     fetchAirQuality();
     forcePageRedraw = true;
@@ -2922,8 +2989,8 @@ void loop() {
     drawCryptoFooter(false);
   }
 
-  if (lastCryptoUpdate == 0 ||
-      now - lastCryptoUpdate >= (unsigned long)cfg.cryptoIntervalSeconds * 1000UL) {
+  if (currentPage != 2 && (lastCryptoUpdate == 0 ||
+      now - lastCryptoUpdate >= (unsigned long)cfg.cryptoIntervalSeconds * 1000UL)) {
     lastCryptoUpdate = now;
     fetchCryptoPrices();
   }
