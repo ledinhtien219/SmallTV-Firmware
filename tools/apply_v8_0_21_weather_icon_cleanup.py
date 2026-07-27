@@ -14,15 +14,9 @@ text = re.sub(
     count=1,
 )
 
-# Remove only the runtime call. Keep the declaration and function definition so
-# older materialized source remains compile-compatible.
+# Remove only the runtime call. Keep declaration/definition for compatibility.
 activity_call = "\n  drawPageActivityPulse();\n"
 text = text.replace(activity_call, "\n")
-
-start = text.find("void drawWeatherIcon(int code, int x, int y) {")
-end = text.find("\n}\n\n// ---------------- Settings storage ----------------", start)
-if start < 0 or end < 0:
-    raise RuntimeError("drawWeatherIcon block not found")
 
 new_icon = r'''void drawRainDrops(int x, int y, bool showers) {
   uint16_t rain = RGB565(58, 153, 255);
@@ -93,21 +87,25 @@ void drawWeatherIcon(int code, int x, int y) {
   drawCloudIcon(x, y, cloudGrey);
 }'''
 
-text = text[:start] + new_icon + text[end + 2:]
+# Truly idempotent: only replace the legacy icon implementation once.
+if "void drawRainDrops(int x, int y, bool showers)" not in text:
+    start = text.find("void drawWeatherIcon(int code, int x, int y) {")
+    end = text.find("\n}\n\n// ---------------- Settings storage ----------------", start)
+    if start < 0 or end < 0:
+        raise RuntimeError("drawWeatherIcon block not found")
+    text = text[:start] + new_icon + text[end + 2:]
 
 required = (
-    'FW_VERSION = "8.0.21"',
-    'void drawRainDrops(',
+    'void drawRainDrops(int x, int y, bool showers)',
     'if (code == 3)',
     'drawCloudIcon(x, y, cloudGrey);',
 )
-for token in required:
-    if token not in text:
-        raise RuntimeError(f"V8.0.21 verification failed: {token}")
+missing = [token for token in required if token not in text]
+if missing:
+    raise RuntimeError("V8.0.21 verification failed: " + ", ".join(missing))
 
-# Check only for the indented runtime call, not the forward declaration.
 if activity_call in text:
     raise RuntimeError("Activity pulse runtime call still present")
 
 SOURCE.write_text(text, encoding="utf-8")
-print("Applied V8.0.21 clean weather icons and removed runtime activity dots")
+print("Applied V8.0.21 clean weather icons idempotently")
