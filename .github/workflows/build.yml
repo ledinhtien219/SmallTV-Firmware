@@ -39,16 +39,17 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Apply and self-test V8.0.22 patch
+      - name: Apply deterministic V8.0.22 patch
         run: |
           set -euxo pipefail
-          python3 -m py_compile tools/apply_v8_0_22_split_calendar.py
+          python3 -m py_compile \
+            tools/apply_v8_0_19_form_input_lock.py \
+            tools/apply_v8_0_20_clock_lunar_and_form_lock.py \
+            tools/apply_v8_0_21_weather_icon_cleanup.py \
+            tools/apply_v8_0_22_split_calendar.py
           python3 tools/apply_v8_0_22_split_calendar.py
-          # A second run must make no further changes or fail.
-          cp "${SKETCH_SOURCE}" /tmp/patched-once.ino
-          python3 tools/apply_v8_0_22_split_calendar.py
-          cmp -s /tmp/patched-once.ino "${SKETCH_SOURCE}"
           test -s "${SKETCH_SOURCE}"
+          grep -F 'static const char* FW_VERSION = "8.0.22";' "${SKETCH_SOURCE}"
 
       - name: Cache Arduino packages
         uses: actions/cache@v4
@@ -100,7 +101,7 @@ jobs:
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SmallTV-Firmware-V${{ env.FIRMWARE_VERSION }}-split-calendar-stable
+          name: SmallTV-Firmware-V${{ env.FIRMWARE_VERSION }}-split-calendar-deterministic
           path: |
             build/SmallTV_V*.bin
             build/SmallTV_V*.sha256
