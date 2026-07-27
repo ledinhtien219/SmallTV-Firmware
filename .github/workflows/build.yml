@@ -39,34 +39,31 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Validate patch scripts
+      - name: Validate and apply V8.0.21 patch
         run: |
           set -euxo pipefail
           python3 -m py_compile \
             tools/apply_v8_0_19_form_input_lock.py \
             tools/apply_v8_0_20_clock_lunar_and_form_lock.py \
             tools/apply_v8_0_21_weather_icon_cleanup.py
-
-      - name: Apply V8.0.21 fixes
-        run: |
-          set -euxo pipefail
           python3 tools/apply_v8_0_21_weather_icon_cleanup.py
 
-      - name: Verify V8.0.21 source
+      - name: Verify patched source semantically
         run: |
           set -euxo pipefail
-          test -f "${SKETCH_SOURCE}"
+          test -s "${SKETCH_SOURCE}"
           grep -F 'static const char* FW_VERSION = "8.0.21";' "${SKETCH_SOURCE}"
           grep -F 'const dirtyFields=new Set()' "${SKETCH_SOURCE}"
           grep -F 'String lunarDateLabel(' "${SKETCH_SOURCE}"
           grep -F 'leadingHourDigit = (!cfg.use12Hour && displayHour < 10) ? -1' "${SKETCH_SOURCE}"
           grep -F 'void drawRainDrops(' "${SKETCH_SOURCE}"
-          grep -F 'Overcast: cloud only' "${SKETCH_SOURCE}"
+          grep -F 'if (code == 3)' "${SKETCH_SOURCE}"
+          grep -F 'drawCloudIcon(x, y, cloudGrey);' "${SKETCH_SOURCE}"
+          grep -F 'SPI.setFrequency(16000000)' "${SKETCH_SOURCE}"
           if grep -F '  drawPageActivityPulse();' "${SKETCH_SOURCE}"; then
             echo 'Runtime activity pulse call still exists' >&2
             exit 1
           fi
-          grep -F 'SPI.setFrequency(16000000)' "${SKETCH_SOURCE}"
 
       - name: Cache Arduino packages
         uses: actions/cache@v4
@@ -118,7 +115,7 @@ jobs:
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SmallTV-Firmware-V${{ env.FIRMWARE_VERSION }}-weather-icons-fixed
+          name: SmallTV-Firmware-V${{ env.FIRMWARE_VERSION }}-weather-icons-semantic
           path: |
             build/SmallTV_V*.bin
             build/SmallTV_V*.sha256
