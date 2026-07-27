@@ -24,40 +24,43 @@ permissions:
 
 env:
   ARDUINO_CORE_VERSION: "3.1.2"
-  FIRMWARE_VERSION: "8.0.25"
+  FIRMWARE_VERSION: "8.0.26"
   SKETCH_SOURCE: ESP8266_SmallTV_Pro_V8_0_15_Full_Audit_Fix.ino
   SKETCH_DIR: SmallTV
-  BUILD_DIR: build
 
 jobs:
   build:
-    name: Compile ESP8266 firmware
+    name: Compile ${{ matrix.label }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - eesz: 4M2M
+            label: 4MB-FS2MB
+          - eesz: 4M1M
+            label: 4MB-FS1MB
 
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Apply deterministic V8.0.25 patch
+      - name: Apply deterministic V8.0.26 patch
         run: |
           set -euxo pipefail
           python3 -m py_compile \
-            tools/apply_v8_0_19_form_input_lock.py \
-            tools/apply_v8_0_20_clock_lunar_and_form_lock.py \
-            tools/apply_v8_0_21_weather_icon_cleanup.py \
-            tools/apply_v8_0_22_split_calendar.py \
-            tools/apply_v8_0_23_web_flash_fix.py \
             tools/apply_v8_0_24_smart_status.py \
-            tools/apply_v8_0_25_animated_mochi.py
-          python3 tools/apply_v8_0_25_animated_mochi.py
+            tools/apply_v8_0_25_animated_mochi.py \
+            tools/apply_v8_0_26_ota_and_partial_refresh.py
+          python3 tools/apply_v8_0_26_ota_and_partial_refresh.py
           test -s "${SKETCH_SOURCE}"
-          grep -F 'static const char* FW_VERSION = "8.0.25";' "${SKETCH_SOURCE}"
+          grep -F 'static const char* FW_VERSION = "8.0.26";' "${SKETCH_SOURCE}"
+          grep -F 'void refreshVisibleWeatherUi()' "${SKETCH_SOURCE}"
+          grep -F 'SmallTV firmware V' "${SKETCH_SOURCE}"
+          grep -F 'ESP.getFreeSketchSpace()' "${SKETCH_SOURCE}"
+          grep -F 'no-store, no-cache, must-revalidate, max-age=0' "${SKETCH_SOURCE}"
           grep -F 'const unsigned long MOCHI_FRAME_INTERVAL_MS = 50UL;' "${SKETCH_SOURCE}"
-          grep -F 'Natural timing: short double blink' "${SKETCH_SOURCE}"
-          grep -F 'Soft cheek pulse' "${SKETCH_SOURCE}"
-          grep -F 'const char* mobileAppPage() {' "${SKETCH_SOURCE}"
-          grep -F 'server.send_P(200, PSTR("text/html; charset=utf-8"), mobileAppPage());' "${SKETCH_SOURCE}"
 
       - name: Cache Arduino packages
         uses: actions/cache@v4
@@ -82,34 +85,35 @@ jobs:
       - name: Prepare sketch folder
         run: |
           set -euxo pipefail
-          rm -rf "${SKETCH_DIR}" "${BUILD_DIR}"
-          mkdir -p "${SKETCH_DIR}" "${BUILD_DIR}"
+          rm -rf "${SKETCH_DIR}" build
+          mkdir -p "${SKETCH_DIR}" build
           cp "${SKETCH_SOURCE}" "${SKETCH_DIR}/${SKETCH_DIR}.ino"
 
       - name: Compile firmware
         run: |
           set -euxo pipefail
           arduino-cli compile \
-            --fqbn esp8266:esp8266:generic:eesz=4M2M,FlashMode=dio \
+            --fqbn "esp8266:esp8266:generic:eesz=${{ matrix.eesz }},FlashMode=dio" \
             --warnings all \
             --export-binaries \
-            --output-dir "${BUILD_DIR}" \
+            --output-dir build \
             "${SKETCH_DIR}"
 
-      - name: Package firmware
+      - name: Package and inspect firmware
         run: |
           set -euxo pipefail
-          test -f "${BUILD_DIR}/${SKETCH_DIR}.ino.bin"
-          cp "${BUILD_DIR}/${SKETCH_DIR}.ino.bin" \
-            "${BUILD_DIR}/SmallTV_V${FIRMWARE_VERSION//./_}.bin"
-          sha256sum "${BUILD_DIR}/SmallTV_V${FIRMWARE_VERSION//./_}.bin" \
-            > "${BUILD_DIR}/SmallTV_V${FIRMWARE_VERSION//./_}.sha256"
-          cp "${SKETCH_SOURCE}" "${BUILD_DIR}/SmallTV_V${FIRMWARE_VERSION//./_}.ino"
+          test -f "build/${SKETCH_DIR}.ino.bin"
+          OUT="build/SmallTV_V${FIRMWARE_VERSION//./_}_${{ matrix.eesz }}.bin"
+          cp "build/${SKETCH_DIR}.ino.bin" "${OUT}"
+          test "$(stat -c%s "${OUT}")" -gt 100000
+          strings "${OUT}" | grep -F '8.0.26'
+          sha256sum "${OUT}" > "${OUT}.sha256"
+          cp "${SKETCH_SOURCE}" "build/SmallTV_V${FIRMWARE_VERSION//./_}_${{ matrix.eesz }}.ino"
 
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SmallTV-Firmware-V${{ env.FIRMWARE_VERSION }}-animated-mochi
+          name: SmallTV-V${{ env.FIRMWARE_VERSION }}-${{ matrix.label }}
           path: |
             build/SmallTV_V*.bin
             build/SmallTV_V*.sha256
