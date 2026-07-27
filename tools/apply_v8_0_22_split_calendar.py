@@ -11,10 +11,11 @@ final_markers = (
     'lunarDate.replace("AL- ", "");',
     'drawText(61, 132, "DL"',
     'drawText(161, 132, "AL"',
+    'lastDateText = solarDate + "|" + lunarDate;',
 )
 
-# Already materialized: only normalize the version and finish successfully.
-if all(marker in text for marker in final_markers):
+# Already materialized: normalize version and repair the cached date key.
+if all(marker in text for marker in final_markers[:-1]):
     text, count = re.subn(
         r'static const char\* FW_VERSION = "8\.0\.\d+";',
         'static const char* FW_VERSION = "8.0.22";',
@@ -23,8 +24,12 @@ if all(marker in text for marker in final_markers):
     )
     if count != 1:
         raise RuntimeError("FW_VERSION declaration not found")
+    text = text.replace(
+        'lastDateText = dateLine;',
+        'lastDateText = solarDate + "|" + lunarDate;',
+    )
     SOURCE.write_text(text, encoding="utf-8")
-    print("V8.0.22 split calendar already present")
+    print("V8.0.22 split calendar already present; cache key repaired")
     raise SystemExit(0)
 
 # Materialize all earlier fixes exactly once.
@@ -73,6 +78,10 @@ new_calendar = '''    fillRoundRect(18, 130, 204, 32, 6, COL_CARD);
 if old_calendar not in text:
     raise RuntimeError("Expected V8.0.20 calendar block not found")
 text = text.replace(old_calendar, new_calendar, 1)
+text = text.replace(
+    'lastDateText = dateLine;',
+    'lastDateText = solarDate + "|" + lunarDate;',
+)
 
 missing = [marker for marker in final_markers if marker not in text]
 if missing:
