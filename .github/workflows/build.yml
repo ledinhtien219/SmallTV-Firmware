@@ -24,7 +24,7 @@ permissions:
 
 env:
   ARDUINO_CORE_VERSION: "3.1.2"
-  FIRMWARE_VERSION: "8.0.23"
+  FIRMWARE_VERSION: "8.0.24"
   SKETCH_SOURCE: ESP8266_SmallTV_Pro_V8_0_15_Full_Audit_Fix.ino
   SKETCH_DIR: SmallTV
   BUILD_DIR: build
@@ -39,7 +39,7 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Apply deterministic V8.0.23 patch
+      - name: Apply deterministic V8.0.24 patch
         run: |
           set -euxo pipefail
           python3 -m py_compile \
@@ -47,12 +47,16 @@ jobs:
             tools/apply_v8_0_20_clock_lunar_and_form_lock.py \
             tools/apply_v8_0_21_weather_icon_cleanup.py \
             tools/apply_v8_0_22_split_calendar.py \
-            tools/apply_v8_0_23_web_flash_fix.py
-          python3 tools/apply_v8_0_23_web_flash_fix.py
+            tools/apply_v8_0_23_web_flash_fix.py \
+            tools/apply_v8_0_24_smart_status.py
+          python3 tools/apply_v8_0_24_smart_status.py
           test -s "${SKETCH_SOURCE}"
-          grep -F 'static const char* FW_VERSION = "8.0.23";' "${SKETCH_SOURCE}"
+          grep -F 'static const char* FW_VERSION = "8.0.24";' "${SKETCH_SOURCE}"
           grep -F 'const char* mobileAppPage() {' "${SKETCH_SOURCE}"
           grep -F 'server.send_P(200, PSTR("text/html; charset=utf-8"), mobileAppPage());' "${SKETCH_SOURCE}"
+          grep -F 'function weatherIconFor(' "${SKETCH_SOURCE}"
+          grep -F 'function renderWeatherAlert(' "${SKETCH_SOURCE}"
+          grep -F 'id="weatherAlert"' "${SKETCH_SOURCE}"
 
       - name: Cache Arduino packages
         uses: actions/cache@v4
@@ -104,7 +108,7 @@ jobs:
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SmallTV-Firmware-V${{ env.FIRMWARE_VERSION }}-web-flash-fix
+          name: SmallTV-Firmware-V${{ env.FIRMWARE_VERSION }}-smart-status
           path: |
             build/SmallTV_V*.bin
             build/SmallTV_V*.sha256
