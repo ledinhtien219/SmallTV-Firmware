@@ -1,0 +1,35 @@
+name: Export V8.0.22 INO
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "tools/apply_v8_0_22_split_calendar.py"
+      - ".github/workflows/export-ino.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    name: Export patched Arduino source
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Apply V8.0.22 once
+        run: |
+          set -euxo pipefail
+          python3 tools/apply_v8_0_22_split_calendar.py
+          grep -F 'static const char* FW_VERSION = "8.0.22";' ESP8266_SmallTV_Pro_V8_0_15_Full_Audit_Fix.ino
+          cp ESP8266_SmallTV_Pro_V8_0_15_Full_Audit_Fix.ino SmallTV_V8_0_22.ino
+
+      - name: Upload INO
+        uses: actions/upload-artifact@v4
+        with:
+          name: SmallTV-V8.0.22-Arduino-INO
+          path: SmallTV_V8_0_22.ino
+          if-no-files-found: error
+          retention-days: 30
