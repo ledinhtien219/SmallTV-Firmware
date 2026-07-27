@@ -20,7 +20,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   ARDUINO_CORE_VERSION: "3.1.2"
@@ -38,30 +38,22 @@ jobs:
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Apply V8.0.20 fixes
         run: |
+          set -euxo pipefail
           python3 tools/apply_v8_0_20_clock_lunar_and_form_lock.py
+
+      - name: Verify V8.0.20 source
+        run: |
+          set -euxo pipefail
+          test -f "${SKETCH_SOURCE}"
           grep -F 'static const char* FW_VERSION = "8.0.20";' "${SKETCH_SOURCE}"
           grep -F 'const dirtyFields=new Set()' "${SKETCH_SOURCE}"
           grep -F 'String lunarDateLabel(' "${SKETCH_SOURCE}"
           grep -F 'leadingHourDigit = (!cfg.use12Hour && displayHour < 10) ? -1' "${SKETCH_SOURCE}"
           grep -F 'return "AL- " + twoDigits(lunarDay)' "${SKETCH_SOURCE}"
-
-      - name: Commit materialized V8.0.20 source
-        if: github.event_name != 'pull_request'
-        run: |
-          if git diff --quiet -- "${SKETCH_SOURCE}"; then
-            echo "Firmware source is already V8.0.20."
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add "${SKETCH_SOURCE}"
-            git commit -m "Materialize SmallTV firmware V8.0.20"
-            git push origin HEAD:main
-          fi
+          grep -F 'SPI.setFrequency(16000000)' "${SKETCH_SOURCE}"
 
       - name: Cache Arduino packages
         uses: actions/cache@v4
@@ -76,6 +68,7 @@ jobs:
 
       - name: Install ESP8266 core
         run: |
+          set -euxo pipefail
           arduino-cli config init --overwrite
           arduino-cli config add board_manager.additional_urls \
             https://arduino.esp8266.com/stable/package_esp8266com_index.json
@@ -84,12 +77,14 @@ jobs:
 
       - name: Prepare sketch folder
         run: |
-          mkdir -p "${SKETCH_DIR}"
+          set -euxo pipefail
+          rm -rf "${SKETCH_DIR}" "${BUILD_DIR}"
+          mkdir -p "${SKETCH_DIR}" "${BUILD_DIR}"
           cp "${SKETCH_SOURCE}" "${SKETCH_DIR}/${SKETCH_DIR}.ino"
 
       - name: Compile firmware
         run: |
-          mkdir -p "${BUILD_DIR}"
+          set -euxo pipefail
           arduino-cli compile \
             --fqbn esp8266:esp8266:generic:eesz=4M2M,FlashMode=dio \
             --warnings all \
@@ -99,6 +94,8 @@ jobs:
 
       - name: Package firmware
         run: |
+          set -euxo pipefail
+          test -f "${BUILD_DIR}/${SKETCH_DIR}.ino.bin"
           cp "${BUILD_DIR}/${SKETCH_DIR}.ino.bin" \
             "${BUILD_DIR}/SmallTV_V${FIRMWARE_VERSION//./_}.bin"
           sha256sum "${BUILD_DIR}/SmallTV_V${FIRMWARE_VERSION//./_}.bin" \
@@ -108,7 +105,7 @@ jobs:
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SmallTV-Firmware-V${{ env.FIRMWARE_VERSION }}-clock-form
+          name: SmallTV-Firmware-V${{ env.FIRMWARE_VERSION }}-clock-form-fixed
           path: |
             build/SmallTV_V*.bin
             build/SmallTV_V*.sha256
