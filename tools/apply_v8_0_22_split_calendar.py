@@ -7,28 +7,16 @@ runpy.run_path("tools/apply_v8_0_21_weather_icon_cleanup.py", run_name="__main__
 SOURCE = Path("ESP8266_SmallTV_Pro_V8_0_15_Full_Audit_Fix.ino")
 text = SOURCE.read_text(encoding="utf-8")
 
-text = re.sub(
+text, version_count = re.subn(
     r'static const char\* FW_VERSION = "8\.0\.\d+";',
     'static const char* FW_VERSION = "8.0.22";',
     text,
     count=1,
 )
+if version_count != 1:
+    raise RuntimeError("FW_VERSION declaration not found")
 
-old = '''    // Two compact calendar lines: solar date and Vietnamese lunar date.
-    fillRoundRect(18, 130, 204, 32, 6, COL_CARD);
-
-    String dateLine = twoDigits(tmNow.tm_mday) + "/" +
-                      twoDigits(tmNow.tm_mon + 1) + "/" +
-                      String(tmNow.tm_year + 1900);
-    String lunarLine = lunarDateLabel(tmNow);
-
-    const int dateWidth = (int)dateLine.length() * 6;
-    const int lunarWidth = (int)lunarLine.length() * 6;
-    drawText((240 - dateWidth) / 2, 133, dateLine, cfg.dateColor, COL_CARD, 1);
-    drawText((240 - lunarWidth) / 2, 148, lunarLine, COL_TEMP, COL_CARD, 1);
-'''
-
-new = '''    fillRoundRect(18, 130, 204, 32, 6, COL_CARD);
+new_calendar = '''    fillRoundRect(18, 130, 204, 32, 6, COL_CARD);
     fillRect(119, 133, 2, 26, COL_LINE);
 
     String solarDate = twoDigits(tmNow.tm_mday) + "/" + twoDigits(tmNow.tm_mon + 1);
@@ -44,23 +32,31 @@ new = '''    fillRoundRect(18, 130, 204, 32, 6, COL_CARD);
     drawText(171 - lunarWidth / 2, 145, lunarDate, COL_TEMP, COL_CARD, 2);
 '''
 
-if new not in text:
-    if old not in text:
-        raise RuntimeError("V8.0.22 calendar source block not found")
-    text = text.replace(old, new, 1)
+# Idempotent: leave an already-patched source untouched.
+if 'String solarDate = twoDigits(tmNow.tm_mday)' not in text:
+    pattern = re.compile(
+        r'(?ms)^    (?:\/\/[^\n]*\n)?'
+        r'    fillRoundRect\(18,\s*1(?:30|32),\s*204,\s*(?:28|32),\s*6,\s*COL_CARD\);.*?'
+        r'^    drawText\([^\n]*(?:dateLine|lunarLine)[^\n]*\);\n'
+        r'(?:^    drawText\([^\n]*lunarLine[^\n]*\);\n)?'
+    )
+    text, replaced = pattern.subn(new_calendar, text, count=1)
+    if replaced != 1:
+        raise RuntimeError("Calendar drawing block not found structurally")
 
 required = (
-    'FW_VERSION = "8.0.22"',
+    'static const char* FW_VERSION = "8.0.22";',
     'String solarDate = twoDigits(tmNow.tm_mday)',
-    'lunarDate.replace("AL- ", "")',
+    'String lunarDate = lunarDateLabel(tmNow);',
+    'lunarDate.replace("AL- ", "");',
     'drawText(61, 132, "DL"',
     'drawText(161, 132, "AL"',
     'drawText(69 - solarWidth / 2, 145, solarDate',
     'drawText(171 - lunarWidth / 2, 145, lunarDate',
 )
-for token in required:
-    if token not in text:
-        raise RuntimeError(f"V8.0.22 verification failed: {token}")
+missing = [token for token in required if token not in text]
+if missing:
+    raise RuntimeError("V8.0.22 verification failed: " + ", ".join(missing))
 
 SOURCE.write_text(text, encoding="utf-8")
 print("Applied V8.0.22 split solar/lunar calendar")
