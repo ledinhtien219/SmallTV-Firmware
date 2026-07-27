@@ -24,7 +24,7 @@ permissions:
 
 env:
   ARDUINO_CORE_VERSION: "3.1.2"
-  FIRMWARE_VERSION: "8.0.21"
+  FIRMWARE_VERSION: "8.0.22"
   SKETCH_SOURCE: ESP8266_SmallTV_Pro_V8_0_15_Full_Audit_Fix.ino
   SKETCH_DIR: SmallTV
   BUILD_DIR: build
@@ -39,26 +39,30 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Validate and apply V8.0.21 patch
+      - name: Validate and apply V8.0.22 patch
         run: |
           set -euxo pipefail
           python3 -m py_compile \
             tools/apply_v8_0_19_form_input_lock.py \
             tools/apply_v8_0_20_clock_lunar_and_form_lock.py \
-            tools/apply_v8_0_21_weather_icon_cleanup.py
-          python3 tools/apply_v8_0_21_weather_icon_cleanup.py
+            tools/apply_v8_0_21_weather_icon_cleanup.py \
+            tools/apply_v8_0_22_split_calendar.py
+          python3 tools/apply_v8_0_22_split_calendar.py
 
       - name: Verify patched source semantically
         run: |
           set -euxo pipefail
           test -s "${SKETCH_SOURCE}"
-          grep -F 'static const char* FW_VERSION = "8.0.21";' "${SKETCH_SOURCE}"
+          grep -F 'static const char* FW_VERSION = "8.0.22";' "${SKETCH_SOURCE}"
           grep -F 'const dirtyFields=new Set()' "${SKETCH_SOURCE}"
-          grep -F 'String lunarDateLabel(' "${SKETCH_SOURCE}"
           grep -F 'leadingHourDigit = (!cfg.use12Hour && displayHour < 10) ? -1' "${SKETCH_SOURCE}"
           grep -F 'void drawRainDrops(' "${SKETCH_SOURCE}"
-          grep -F 'if (code == 3)' "${SKETCH_SOURCE}"
-          grep -F 'drawCloudIcon(x, y, cloudGrey);' "${SKETCH_SOURCE}"
+          grep -F 'String solarDate = twoDigits(tmNow.tm_mday)' "${SKETCH_SOURCE}"
+          grep -F 'lunarDate.replace("AL- ", "")' "${SKETCH_SOURCE}"
+          grep -F 'drawText(61, 132, "DL"' "${SKETCH_SOURCE}"
+          grep -F 'drawText(161, 132, "AL"' "${SKETCH_SOURCE}"
+          grep -F 'drawText(69 - solarWidth / 2, 145, solarDate' "${SKETCH_SOURCE}"
+          grep -F 'drawText(171 - lunarWidth / 2, 145, lunarDate' "${SKETCH_SOURCE}"
           grep -F 'SPI.setFrequency(16000000)' "${SKETCH_SOURCE}"
           if grep -F '  drawPageActivityPulse();' "${SKETCH_SOURCE}"; then
             echo 'Runtime activity pulse call still exists' >&2
@@ -115,7 +119,7 @@ jobs:
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SmallTV-Firmware-V${{ env.FIRMWARE_VERSION }}-weather-icons-semantic
+          name: SmallTV-Firmware-V${{ env.FIRMWARE_VERSION }}-split-calendar
           path: |
             build/SmallTV_V*.bin
             build/SmallTV_V*.sha256
