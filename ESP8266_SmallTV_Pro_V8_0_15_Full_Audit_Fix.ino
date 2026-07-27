@@ -24,7 +24,7 @@
 #include <SPI.h>
 #include <time.h>
 
-static const char* FW_VERSION = "8.0.17";
+static const char* FW_VERSION = "8.0.18";
 static const char* FW_BUILD = __DATE__ " " __TIME__;
 
 // ---------------- LCD ----------------
@@ -95,6 +95,8 @@ void drawOtaStartScreen();
 void drawOtaProgress(size_t current, size_t total);
 void drawOtaSuccessScreen();
 void drawOtaErrorScreen(int errorCode);
+void animatePageTransition();
+void drawPageActivityPulse();
 
 bool apMode = false;
 bool ntpOk = false;
@@ -162,6 +164,9 @@ uint8_t currentPage = 0;
 uint8_t mochiExpression = 0; // 0=AUTO, 1=VUI, 2=BUON, 3=NGU, 4=NGAC NHIEN, 5=GIAN, 6=YEU
 bool colonVisible = true;
 bool forcePageRedraw = true;
+uint8_t lastRenderedPage = 255;
+unsigned long lastPageActivityFrame = 0;
+uint8_t pageActivityFrame = 0;
 
 bool otaInProgress = false;
 uint8_t otaLastPercent = 255;
@@ -1274,8 +1279,43 @@ bool fetchCryptoPrices() {
   return any;
 }
 
+void animatePageTransition() {
+  // A short scan-line wipe hides full-screen redraws without requiring a
+  // 115 KB framebuffer, which is not practical on ESP8266.
+  const uint8_t bands = 12;
+  const int bandHeight = 10;
+  for (uint8_t step = 0; step < bands; step++) {
+    int topY = step * bandHeight;
+    int bottomY = 240 - (step + 1) * bandHeight;
+    fillRect(0, topY, 240, bandHeight, COL_BG);
+    if (bottomY != topY) fillRect(0, bottomY, 240, bandHeight, COL_BG);
+    delay(2);
+    yield();
+  }
+}
+
+void drawPageActivityPulse() {
+  if (currentPage == 2 || otaInProgress || lastRenderedPage != currentPage) return;
+  unsigned long now = millis();
+  if (now - lastPageActivityFrame < 180UL) return;
+  lastPageActivityFrame = now;
+  pageActivityFrame = (pageActivityFrame + 1) % 3;
+
+  // All non-Mochi pages share the dark top card in this area. Redrawing only
+  // three tiny dots gives subtle motion and costs very little SPI bandwidth.
+  const int y = 42;
+  fillRect(205, 38, 25, 9, COL_CARD);
+  for (uint8_t i = 0; i < 3; i++) {
+    fillCircle(209 + i * 8, y, 2,
+               i == pageActivityFrame ? COL_ACCENT : COL_LINE);
+  }
+}
+
 void drawPage(bool forceRedraw = false) {
   if (!forceRedraw && !forcePageRedraw) return;
+
+  bool pageChanged = lastRenderedPage != currentPage;
+  if (pageChanged && lastRenderedPage != 255) animatePageTransition();
 
   if (currentPage != 2) mochiScreenReady = false;
   if (currentPage != 3) cryptoScreenReady = false;
@@ -1298,6 +1338,9 @@ void drawPage(bool forceRedraw = false) {
     drawCryptoPage();
   }
 
+  lastRenderedPage = currentPage;
+  pageActivityFrame = 0;
+  lastPageActivityFrame = millis();
   forcePageRedraw = false;
   yield();
 }
@@ -2803,7 +2846,7 @@ void setup() {
   SPI.begin();
   SPI.setDataMode(SPI_MODE0);
   SPI.setBitOrder(MSBFIRST);
-  SPI.setFrequency(10000000);
+  SPI.setFrequency(16000000);
 
   lcdInit();
   Serial.println("LCD init OK");
@@ -2836,7 +2879,7 @@ void setup() {
     SPI.begin();
     SPI.setDataMode(SPI_MODE0);
     SPI.setBitOrder(MSBFIRST);
-    SPI.setFrequency(10000000);
+    SPI.setFrequency(16000000);
     lcdInit();
 
     lastPageChange = millis();
@@ -2846,7 +2889,7 @@ void setup() {
     SPI.begin();
     SPI.setDataMode(SPI_MODE0);
     SPI.setBitOrder(MSBFIRST);
-    SPI.setFrequency(10000000);
+    SPI.setFrequency(16000000);
     lcdInit();
 
     startSetupAP();
@@ -2964,7 +3007,10 @@ void loop() {
     drawPage(true);
   }
 
-  if (weatherRefreshRequested && currentPage != 2) {
+  drawPageActivityPulse();
+
+  if (weatherRefreshRequested && currentPage != 2 &&
+      now - lastPageChange > 600UL) {
     weatherRefreshRequested = false;
     lastWeatherUpdate = now;
     lastAirQualityUpdate = now;
@@ -2973,13 +3019,13 @@ void loop() {
     forcePageRedraw = true;
   }
 
-  if (currentPage != 2 && now - lastWeatherUpdate >= (unsigned long)cfg.weatherIntervalMinutes * 60000UL) {
+  if (currentPage != 2 && now - lastPageChange > 600UL && now - lastWeatherUpdate >= (unsigned long)cfg.weatherIntervalMinutes * 60000UL) {
     lastWeatherUpdate = now;
     fetchWeather();
     forcePageRedraw = true;
   }
 
-  if (currentPage != 2 && now - lastAirQualityUpdate >= (unsigned long)cfg.aqiIntervalMinutes * 60000UL) {
+  if (currentPage != 2 && now - lastPageChange > 600UL && now - lastAirQualityUpdate >= (unsigned long)cfg.aqiIntervalMinutes * 60000UL) {
     lastAirQualityUpdate = now;
     fetchAirQuality();
     forcePageRedraw = true;
@@ -2989,7 +3035,7 @@ void loop() {
     drawCryptoFooter(false);
   }
 
-  if (currentPage != 2 && (lastCryptoUpdate == 0 ||
+  if (currentPage != 2 && now - lastPageChange > 600UL && (lastCryptoUpdate == 0 ||
       now - lastCryptoUpdate >= (unsigned long)cfg.cryptoIntervalSeconds * 1000UL)) {
     lastCryptoUpdate = now;
     fetchCryptoPrices();
