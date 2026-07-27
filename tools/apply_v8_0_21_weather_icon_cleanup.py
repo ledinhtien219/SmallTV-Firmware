@@ -14,9 +14,10 @@ text = re.sub(
     count=1,
 )
 
-# Remove the decorative three-dot activity pulse. It was visually confused with
-# rain beside the weather icon and also caused unnecessary periodic LCD writes.
-text = text.replace("\n  drawPageActivityPulse();\n", "\n")
+# Remove only the runtime call. Keep the declaration and function definition so
+# older materialized source remains compile-compatible.
+activity_call = "\n  drawPageActivityPulse();\n"
+text = text.replace(activity_call, "\n")
 
 start = text.find("void drawWeatherIcon(int code, int x, int y) {")
 end = text.find("\n}\n\n// ---------------- Settings storage ----------------", start)
@@ -37,7 +38,6 @@ new_icon = r'''void drawRainDrops(int x, int y, bool showers) {
 }
 
 void drawWeatherIcon(int code, int x, int y) {
-  // Clear only the icon cell. Every weather state is static and unambiguous.
   fillRect(x - 25, y - 22, 50, 46, COL_CARD);
 
   const uint16_t cloudWhite = RGB565(225, 236, 243);
@@ -50,14 +50,12 @@ void drawWeatherIcon(int code, int x, int y) {
   }
 
   if (code == 1 || code == 2) {
-    // Partly cloudy: sun remains visible behind a compact bright cloud.
     drawSunIcon(x - 9, y - 7);
     drawCloudIcon(x + 5, y + 5, cloudWhite);
     return;
   }
 
   if (code == 3) {
-    // Overcast: cloud only. Never show blue rain marks for plain cloud cover.
     drawCloudIcon(x, y, cloudGrey);
     return;
   }
@@ -100,13 +98,16 @@ text = text[:start] + new_icon + text[end + 2:]
 required = (
     'FW_VERSION = "8.0.21"',
     'void drawRainDrops(',
-    'Overcast: cloud only',
-    'drawPageActivityPulse();',
+    'if (code == 3)',
+    'drawCloudIcon(x, y, cloudGrey);',
 )
-if required[0] not in text or required[1] not in text or required[2] not in text:
-    raise RuntimeError("V8.0.21 weather icon verification failed")
-if required[3] in text:
-    raise RuntimeError("Activity pulse call still present")
+for token in required:
+    if token not in text:
+        raise RuntimeError(f"V8.0.21 verification failed: {token}")
+
+# Check only for the indented runtime call, not the forward declaration.
+if activity_call in text:
+    raise RuntimeError("Activity pulse runtime call still present")
 
 SOURCE.write_text(text, encoding="utf-8")
-print("Applied V8.0.21 clean weather icons and removed activity dots")
+print("Applied V8.0.21 clean weather icons and removed runtime activity dots")
